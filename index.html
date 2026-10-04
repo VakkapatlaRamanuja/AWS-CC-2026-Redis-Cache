@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product catalog</title>
+<style>
+  :root {
+    --ink: #17252a; --muted: #5b6b70; --paper: #f7f9f9; --card: #ffffff;
+    --line: #d5dfe1; --accent: #0f6e6e; --accent-ink: #ffffff;
+    --hit: #0b6b3a; --hit-bg: #dff3e7; --miss: #8a4b00; --miss-bg: #fdecd0; --err: #a31f34;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font: 700 2rem/1.15 Georgia, "Times New Roman", serif; margin: 0 0 8px; }
+  .lede { color: var(--muted); max-width: 60ch; margin: 0 0 32px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 22px; }
+  h2 { font-size: 1.1rem; margin: 0 0 14px; }
+  label { display: block; font-size: .9rem; margin: 12px 0 4px; }
+  input, textarea { width: 100%; font: inherit; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: #fff; color: var(--ink); }
+  textarea { min-height: 70px; resize: vertical; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 3px solid #7cc4c4; outline-offset: 1px; }
+  button { margin-top: 16px; font: inherit; font-weight: 600; padding: 10px 18px; border: 0;
+    border-radius: 6px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  button.link { background: none; color: var(--accent); padding: 0; margin: 0 0 0 6px; text-decoration: underline; }
+  .result { margin-top: 18px; }
+  .badge { display: inline-block; font-size: .85rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+  .badge.hit { background: var(--hit-bg); color: var(--hit); }
+  .badge.miss { background: var(--miss-bg); color: var(--miss); }
+  .product { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .product h3 { margin: 0 0 4px; font-size: 1.15rem; }
+  .price { font-weight: 700; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  .error { color: var(--err); font-weight: 600; }
+  footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Product catalog</h1>
+  <p class="lede">Look up a product by its ID. The first lookup reads from the database; repeat lookups within 60 seconds come from the Redis cache and are faster.</p>
+
+  <div class="grid">
+    <section aria-labelledby="lookup-title">
+      <h2 id="lookup-title">Look up a product</h2>
+      <label for="pid">Product ID</label>
+      <input id="pid" type="number" min="1" value="1" inputmode="numeric">
+      <button id="lookup">Look up product</button>
+      <div class="result" id="lookup-result" aria-live="polite"></div>
+    </section>
+
+    <section aria-labelledby="add-title">
+      <h2 id="add-title">Add a product</h2>
+      <label for="name">Name</label>
+      <input id="name" maxlength="100">
+      <label for="desc">Description</label>
+      <textarea id="desc"></textarea>
+      <label for="price">Price</label>
+      <input id="price" type="number" min="0" step="0.01" inputmode="decimal">
+      <label for="cat">Category</label>
+      <input id="cat" maxlength="50">
+      <button id="add">Add product</button>
+      <div class="result" id="add-result" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <footer>Runs on AWS: EC2 (Node.js API), RDS MySQL and ElastiCache Redis. This page is hosted on Vercel.</footer>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const money = (v) => 'Rs. ' + Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  async function lookup() {
+    const out = $('lookup-result'); out.replaceChildren();
+    const id = $('pid').value;
+    if (!id) { out.append(el('p', 'error', 'Enter a product ID.')); return; }
+    const btn = $('lookup'); btn.disabled = true;
+    try {
+      const r = await fetch('/api/products/' + encodeURIComponent(id));
+      const d = await r.json();
+      if (!r.ok) { out.append(el('p', 'error', d.error || 'Something went wrong.')); return; }
+      const fromCache = d.source === 'cache';
+      out.append(el('span', 'badge ' + (fromCache ? 'hit' : 'miss'),
+        fromCache ? 'From cache' : 'From database'));
+      out.append(el('span', 'meta', '  ' + d.time_ms + ' ms on the server'));
+      const box = el('div', 'product');
+      box.append(el('h3', '', d.product.name));
+      box.append(el('div', 'price', money(d.product.price)));
+      if (d.product.category) box.append(el('div', 'meta', d.product.category));
+      if (d.product.description) box.append(el('p', '', d.product.description));
+      out.append(box);
+    } catch (e) {
+      out.append(el('p', 'error', 'Could not reach the server. Try again.'));
+    } finally { btn.disabled = false; }
+  }
+
+  async function add() {
+    const out = $('add-result'); out.replaceChildren();
+    const name = $('name').value.trim(), price = $('price').value;
+    if (!name || price === '') { out.append(el('p', 'error', 'Name and price are required.')); return; }
+    const btn = $('add'); btn.disabled = true;
+    try {
+      const r = await fetch('/api/products', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: $('desc').value.trim(), price: Number(price), category: $('cat').value.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok) { out.append(el('p', 'error', d.error || 'Something went wrong.')); return; }
+      const p = el('p', '', 'Added "' + d.name + '" with ID ' + d.id + '.');
+      const go = el('button', 'link', 'Look it up');
+      go.addEventListener('click', () => { $('pid').value = d.id; lookup(); });
+      p.append(go); out.append(p);
+      ['name', 'desc', 'price', 'cat'].forEach((i) => { $(i).value = ''; });
+    } catch (e) {
+      out.append(el('p', 'error', 'Could not reach the server. Try again.'));
+    } finally { btn.disabled = false; }
+  }
+
+  $('lookup').addEventListener('click', lookup);
+  $('add').addEventListener('click', add);
+  $('pid').addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup(); });
+</script>
+</body>
+</html>
