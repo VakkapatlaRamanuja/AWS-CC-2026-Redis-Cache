@@ -1,0 +1,7 @@
+{
+  "name": "catalog-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vercel front end for the AWS product catalog with Redis caching",
+  "engines": { "node": "20.x" }
+}
